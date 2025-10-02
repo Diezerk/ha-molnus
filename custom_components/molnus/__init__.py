@@ -1,7 +1,10 @@
 # custom_components/molnus/__init__.py
 from __future__ import annotations
+
 import logging
-from datetime import timedelta, datetime
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional, Tuple
+
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -15,23 +18,28 @@ from .coordinator import MolnusCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-# Optional influx imports — try/except to keep graceful failures if package missing
+# Try optional influx v2 client
 try:
     from influxdb_client import InfluxDBClient, Point, WritePrecision
     from influxdb_client.client.write_api import SYNCHRONOUS
-    _INFLUX_AVAILABLE = True
+
+    _INFLUX_V2_AVAILABLE = True
 except Exception:
     InfluxDBClient = None
     Point = None
     WritePrecision = None
     SYNCHRONOUS = None
-    _INFLUX_AVAILABLE = False
+    _INFLUX_V2_AVAILABLE = False
 
-# hur många historikposter vi sparar i sensor-attributen
+# http client for Influx v1 writes
+import httpx  # kept here intentionally
+
+# max history items stored in memory (sensor attributes)
 MAX_HISTORY_ITEMS = 500
 
-def _parse_iso_to_dt(iso: str) -> datetime | None:
-    """Parse ISO string tolerant: handles trailing Z."""
+
+def _parse_iso_to_dt(iso: Optional[str]) -> Optional[datetime]:
+    """Parse ISO timestamp tolerant (handles trailing Z -> +00:00)."""
     if not iso:
         return None
     try:
@@ -41,51 +49,197 @@ def _parse_iso_to_dt(iso: str) -> datetime | None:
             iso2 = iso
         return datetime.fromisoformat(iso2)
     except Exception:
-        # sista fallback: try removing fractional seconds oddities
         try:
-            # remove timezone and parse naive (not ideal)
             base = iso.split(".")[0].replace("Z", "")
             return datetime.fromisoformat(base)
         except Exception:
             return None
 
-def _create_influx_client_if_configured(stored: dict, entry_data: dict):
-    """
-    Skapar och cache:ar en InfluxDBClient i stored om influx-konfig finns.
-    Förväntar: entry_data innehåller 'influx_url','influx_token','influx_org','influx_bucket'
-    Returnerar (client, write_api, bucket, org) eller (None, None, None, None)
-    """
-    if not _INFLUX_AVAILABLE:
-        return None, None, None, None
 
-    # cache i stored för entry
-    if stored.get("_influx_client"):
-        return stored.get("_influx_client"), stored.get("_influx_write_api"), stored.get("_influx_bucket"), stored.get("_influx_org")
+def _create_influx_client_if_configured(
+    stored: Dict[str, Any], entry_data: Dict[str, Any]
+) -> Tuple[Optional[str], Optional[Any], Optional[Any], Optional[str], Optional[str]]:
+    """
+    Detect and create/cache Influx client/config for either v2 or v1.
 
+    Returns a tuple indicating the method:
+      ("v2", client, write_api, bucket, org) when v2 configured and client created
+      ("v1", None, None, db, url) when v1 configured (params stored in stored["_influx_v1"])
+      (None, None, None, None, None) when no Influx configured
+    """
+    # prefer explicit version in entry_data
+    version = str(entry_data.get("influx_version", "2")).strip()
+
+    # Try v2 if configured and available
+    if version != "1":
+        url = entry_data.get("influx_url")
+        token = entry_data.get("influx_token")
+        org = entry_data.get("influx_org")
+        bucket = entry_data.get("influx_bucket")
+        if url and token and org and bucket and _INFLUX_V2_AVAILABLE:
+            # cache client in stored
+            if stored.get("_influx_v2_client"):
+                return ("v2", stored.get("_influx_v2_client"), stored.get("_influx_v2_write_api"), bucket, org)
+            try:
+                client = InfluxDBClient(url=url, token=token, org=org)
+                write_api = client.write_api(write_options=SYNCHRONOUS)
+                stored["_influx_v2_client"] = client
+                stored["_influx_v2_write_api"] = write_api
+                stored["_influx_v2_bucket"] = bucket
+                stored["_influx_v2_org"] = org
+                _LOGGER.debug("Molnus: created InfluxDB v2 client for bucket %s", bucket)
+                return ("v2", client, write_api, bucket, org)
+            except Exception:
+                _LOGGER.exception("Molnus: failed to create InfluxDB v2 client")
+                # fall through to v1 detection
+
+    # Try v1 (legacy)
     url = entry_data.get("influx_url")
-    token = entry_data.get("influx_token")
-    org = entry_data.get("influx_org")
-    bucket = entry_data.get("influx_bucket")
+    db = entry_data.get("influx_db")
+    user = entry_data.get("influx_user")
+    password = entry_data.get("influx_password")
+    if url and db and user is not None:
+        # cache v1 params in stored for reuse
+        stored["_influx_v1"] = {"url": url.rstrip("/"), "db": db, "user": user, "password": password or ""}
+        _LOGGER.debug("Molnus: configured InfluxDB v1 -> %s db=%s", url, db)
+        return ("v1", None, None, db, url.rstrip("/"))
 
-    if not url or not token or not org or not bucket:
-        return None, None, None, None
+    return (None, None, None, None, None)
+
+
+async def _write_influx_v1(
+    stored: Dict[str, Any],
+    measurement: str,
+    tags: Dict[str, Any],
+    fields: Dict[str, Any],
+    ts_dt: Optional[datetime],
+) -> bool:
+    """
+    Write a single point to InfluxDB v1 via HTTP line-protocol.
+    Returns True if success (HTTP 204/200), False otherwise.
+    """
+    params = stored.get("_influx_v1")
+    if not params:
+        return False
+
+    url = params["url"]
+    db = params["db"]
+    user = params["user"]
+    password = params["password"]
+
+    def _escape_tag(v: str) -> str:
+        return str(v).replace(" ", r"\ ").replace(",", r"\,").replace("=", r"\=")
+
+    tag_parts = []
+    for k, v in (tags or {}).items():
+        if v is None:
+            continue
+        tag_parts.append(f"{k}={_escape_tag(v)}")
+    tags_str = ",".join(tag_parts)
+
+    field_parts = []
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        if isinstance(v, str):
+            fv = v.replace('"', r'\"')
+            field_parts.append(f'{k}="{fv}"')
+        elif isinstance(v, bool):
+            field_parts.append(f"{k}={'true' if v else 'false'}")
+        else:
+            # numeric
+            try:
+                field_parts.append(f"{k}={float(v)}")
+            except Exception:
+                field_parts.append(f'{k}="{str(v)}"')
+    fields_str = ",".join(field_parts)
+    if not fields_str:
+        return False
+
+    measurement_escaped = measurement.replace(" ", r"\ ")
+    line = measurement_escaped
+    if tags_str:
+        line += f",{tags_str}"
+    line += f" {fields_str}"
+
+    if ts_dt:
+        ts_ns = int(ts_dt.timestamp() * 1_000_000_000)
+        line += f" {ts_ns}"
+
+    write_url = f"{url}/write"
+    params_qs = {"db": db}
+
+    # Try reuse httpx.Client from MolnusClient if available
+    http_client = None
+    try:
+        molnus_client: MolnusClient = stored.get("client")
+        if molnus_client and hasattr(molnus_client, "_client"):
+            http_client = molnus_client._client  # httpx.AsyncClient
+    except Exception:
+        http_client = None
+
+    created_local = False
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=10.0)
+        created_local = True
 
     try:
-        client = InfluxDBClient(url=url, token=token, org=org)
-        write_api = client.write_api(write_options=SYNCHRONOUS)
-        stored["_influx_client"] = client
-        stored["_influx_write_api"] = write_api
-        stored["_influx_bucket"] = bucket
-        stored["_influx_org"] = org
-        _LOGGER.debug("Molnus: InfluxDB client created for bucket %s", bucket)
-        return client, write_api, bucket, org
+        resp = await http_client.post(write_url, params=params_qs, content=line, auth=(user, password) if user else None)
+        if resp.status_code in (204, 200):
+            return True
+        _LOGGER.debug("Influx v1 write failed: %s %s -- line: %s", resp.status_code, resp.text, line)
+        return False
     except Exception:
-        _LOGGER.exception("Molnus: Failed to create InfluxDB client")
-        return None, None, None, None
+        _LOGGER.exception("Failed to write to InfluxDB v1")
+        return False
+    finally:
+        if created_local:
+            await http_client.aclose()
 
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+
+async def _write_influx_point(
+    stored: Dict[str, Any],
+    method_tuple: Tuple[Optional[str], Optional[Any], Optional[Any], Optional[str], Optional[str]],
+    top_label: str,
+    top_accuracy: Optional[float],
+    camera_id_local: str,
+    ts_dt: Optional[datetime],
+) -> None:
+    """
+    High-level writer that routes to v2 or v1 accordingly.
+    method_tuple is returned by _create_influx_client_if_configured.
+    """
+    if not method_tuple or method_tuple[0] is None:
+        return
+
+    kind = method_tuple[0]
+    if kind == "v2":
+        # v2 usage
+        _, client, write_api, bucket, org = method_tuple
+        if not write_api:
+            return
+        try:
+            p = Point("molnus_image").tag("species", top_label).tag("camera_id", camera_id_local).field(
+                "accuracy", float(top_accuracy) if top_accuracy is not None else 0.0
+            )
+            if ts_dt:
+                p = p.time(ts_dt, WritePrecision.NS)
+            # Write synchronously (blocking small amount)
+            write_api.write(bucket=bucket, org=org, record=p)
+        except Exception:
+            _LOGGER.exception("Failed to write point to InfluxDB v2")
+    elif kind == "v1":
+        # write via http
+        try:
+            await _write_influx_v1(stored, "molnus_image", {"species": top_label, "camera_id": camera_id_local}, {"accuracy": float(top_accuracy) if top_accuracy is not None else 0.0}, ts_dt)
+        except Exception:
+            _LOGGER.exception("Failed to write point to InfluxDB v1")
+
+
+async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
     hass.data.setdefault(DOMAIN, {})
     return True
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data = entry.data
@@ -98,7 +252,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     client = MolnusClient(email=email, password=password)
     coordinator = MolnusCoordinator(hass, client, DEFAULT_SCAN_INTERVAL)
 
-    # Validera inloggning
+    # Validate login
     await coordinator.async_config_entry_first_refresh()
 
     hass.data[DOMAIN].setdefault(entry.entry_id, {})
@@ -107,25 +261,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     stored["coordinator"] = coordinator
     stored["last_images"] = None
     stored["last_images_count"] = 0
-    stored["history"] = []  # lista av {captureDate, url, label, accuracy}
+    stored["history"] = []
     stored["label_counts"] = {label: 0 for label in LABELS.keys()}
     stored["label_sensors"] = []
     stored["other_sensors"] = []
-
-    # cache entry data for influx access
     stored["_entry_data"] = data
+
+    # Prepare influx config (v1 caching happens inside _create_influx_client_if_configured)
+    _create_influx_client_if_configured(stored, data)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Registrera service (en gång per integration)
+    # Register service (single registration per integration instance)
     if not hass.data[DOMAIN].get("service_registered"):
-        schema = vol.Schema({
-            vol.Optional("entry_id"): str,
-            vol.Required("camera_id"): str,
-            vol.Optional("offset", default=0): int,
-            vol.Optional("limit", default=50): int,
-            vol.Optional("wildlife_required", default=False): bool,
-        })
+        schema = vol.Schema(
+            {
+                vol.Optional("entry_id"): str,
+                vol.Required("camera_id"): str,
+                vol.Optional("offset", default=0): int,
+                vol.Optional("limit", default=50): int,
+                vol.Optional("wildlife_required", default=False): bool,
+            }
+        )
 
         async def handle_fetch_images(call: ServiceCall) -> None:
             _entry_id = call.data.get("entry_id")
@@ -154,23 +311,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             try:
                 images_resp: ImagesResponseSimple = await client_local.get_images(
-                    camera_id=camera_id_local,
-                    offset=offset,
-                    limit=limit,
-                    wildlife_required=wildlife_required
+                    camera_id=camera_id_local, offset=offset, limit=limit, wildlife_required=wildlife_required
                 )
             except Exception as e:
                 _LOGGER.exception("Failed to fetch images: %s", e)
                 return
 
-            # Spara och bygg historik (senaste först)
             stored_local["last_images"] = images_resp
             stored_local["last_images_count"] = len(images_resp.images) if images_resp and images_resp.images else 0
 
             found_labels = set()
 
-            # prepare influx client if configured
-            influx_client, influx_write_api, influx_bucket, influx_org = _create_influx_client_if_configured(stored_local, stored_local.get("_entry_data", {}))
+            # determine method (v2 or v1)
+            method_tuple = _create_influx_client_if_configured(stored_local, stored_local.get("_entry_data", {}))
 
             for img in images_resp.images:
                 top_label = None
@@ -179,7 +332,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     sorted_preds = sorted(
                         [p for p in img.predictions if p and p.label is not None],
                         key=lambda x: (x.accuracy if x.accuracy is not None else -1),
-                        reverse=True
+                        reverse=True,
                     )
                     if sorted_preds:
                         top_label = sorted_preds[0].label
@@ -191,33 +344,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "label": top_label,
                     "accuracy": top_accuracy,
                 }
-                # undvik dubbletter
                 if entry_obj["captureDate"] not in [h.get("captureDate") for h in stored_local["history"]]:
                     stored_local["history"].insert(0, entry_obj)
 
                 if top_label:
                     found_labels.add(top_label)
 
-                # Write to Influx if configured (one point per image/top_label)
-                if influx_write_api and influx_bucket and influx_org and top_label:
+                # write to influx (v2 or v1) non-blocking in async context
+                if method_tuple and method_tuple[0]:
+                    ts = _parse_iso_to_dt(entry_obj["captureDate"]) if entry_obj.get("captureDate") else None
                     try:
-                        ts = _parse_iso_to_dt(entry_obj["captureDate"]) if entry_obj["captureDate"] else None
-                        p = Point("molnus_image").tag("species", top_label).tag("camera_id", camera_id_local).field("accuracy", float(top_accuracy) if top_accuracy is not None else 0.0)
-                        if ts:
-                            p = p.time(ts, WritePrecision.NS)
-                        influx_write_api.write(bucket=influx_bucket, org=influx_org, record=p)
+                        await _write_influx_point(stored_local, method_tuple, top_label, top_accuracy, camera_id_local, ts)
                     except Exception:
-                        _LOGGER.exception("Failed to write point to InfluxDB for image %s", entry_obj.get("captureDate"))
+                        _LOGGER.exception("Error while writing to Influx for image %s", entry_obj.get("captureDate"))
 
-            # Trimma history
+            # trim history
             if len(stored_local["history"]) > MAX_HISTORY_ITEMS:
                 stored_local["history"] = stored_local["history"][:MAX_HISTORY_ITEMS]
 
-            # Uppdatera label_counts
             for label in LABELS.keys():
                 stored_local["label_counts"][label] = 1 if label in found_labels else 0
 
-            # Uppdatera sensorer
+            # update sensors
             for sensor in stored_local.get("label_sensors", []):
                 try:
                     sensor.async_write_ha_state()
@@ -234,7 +382,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(DOMAIN, "fetch_images", handle_fetch_images, schema=schema)
         hass.data[DOMAIN]["service_registered"] = True
 
-    # Auto-fetch scheduling
+    # Auto-fetch
     if camera_id:
         async def _auto_fetch(now):
             try:
@@ -253,9 +401,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 stored_local["last_images_count"] = len(images_resp.images) if images_resp and images_resp.images else 0
 
                 found_labels = set()
-
-                # influx client
-                influx_client, influx_write_api, influx_bucket, influx_org = _create_influx_client_if_configured(stored_local, stored_local.get("_entry_data", {}))
+                method_tuple = _create_influx_client_if_configured(stored_local, stored_local.get("_entry_data", {}))
 
                 for img in images_resp.images:
                     top_label = None
@@ -264,7 +410,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         sorted_preds = sorted(
                             [p for p in img.predictions if p and p.label is not None],
                             key=lambda x: (x.accuracy if x.accuracy is not None else -1),
-                            reverse=True
+                            reverse=True,
                         )
                         if sorted_preds:
                             top_label = sorted_preds[0].label
@@ -282,16 +428,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     if top_label:
                         found_labels.add(top_label)
 
-                    # Write to influx
-                    if influx_write_api and influx_bucket and influx_org and top_label:
+                    if method_tuple and method_tuple[0]:
+                        ts = _parse_iso_to_dt(entry_obj["captureDate"]) if entry_obj.get("captureDate") else None
                         try:
-                            ts = _parse_iso_to_dt(entry_obj["captureDate"]) if entry_obj["captureDate"] else None
-                            p = Point("molnus_image").tag("species", top_label).tag("camera_id", camera_id).field("accuracy", float(top_accuracy) if top_accuracy is not None else 0.0)
-                            if ts:
-                                p = p.time(ts, WritePrecision.NS)
-                            influx_write_api.write(bucket=influx_bucket, org=influx_org, record=p)
+                            await _write_influx_point(stored_local, method_tuple, top_label, top_accuracy, camera_id, ts)
                         except Exception:
-                            _LOGGER.exception("Failed to write point to InfluxDB for image %s", entry_obj.get("captureDate"))
+                            _LOGGER.exception("Error while writing to Influx for image %s", entry_obj.get("captureDate"))
 
                 if len(stored_local["history"]) > MAX_HISTORY_ITEMS:
                     stored_local["history"] = stored_local["history"][:MAX_HISTORY_ITEMS]
@@ -314,16 +456,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception:
                 _LOGGER.exception("Auto-fetch failed")
 
-        # kör första gång direkt i bakgrunden
+        # run first fetch immediately (in background) and schedule recurring
         hass.async_create_task(_auto_fetch(utcnow()))
-        hass.data[DOMAIN][entry.entry_id]["_auto_fetch_unsub"] = async_track_time_interval(
-            hass, _auto_fetch, timedelta(seconds=interval_seconds)
-        )
+        hass.data[DOMAIN][entry.entry_id]["_auto_fetch_unsub"] = async_track_time_interval(hass, _auto_fetch, timedelta(seconds=interval_seconds))
 
     return True
 
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    # Avregistrera schemaläggning om den finns
     stored = hass.data[DOMAIN].get(entry.entry_id, {})
     unsub = stored.get("_auto_fetch_unsub")
     if unsub:
@@ -336,13 +476,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         stored = hass.data[DOMAIN].pop(entry.entry_id, None)
         if stored:
-            # stäng Influx client om den skapats
-            influx_client = stored.get("_influx_client")
+            # close influx v2 client if exists
+            influx_client = stored.get("_influx_v2_client")
             try:
                 if influx_client:
                     influx_client.close()
             except Exception:
-                _LOGGER.exception("Failed to close Influx client")
+                _LOGGER.exception("Failed to close Influx v2 client")
             client = stored.get("client")
             if client:
                 await client.close()
