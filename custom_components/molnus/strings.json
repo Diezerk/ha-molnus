@@ -1,0 +1,18 @@
+{
+  "title": "Molnus",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Anslut till Molnus",
+        "data": {
+          "email": "E-post",
+          "password": "Lösenord"
+        }
+      }
+    },
+    "error": {
+      "auth": "Felaktig e-post eller lösenord",
+      "unknown": "Okänt fel, se loggen"
+    }
+  }
+}
