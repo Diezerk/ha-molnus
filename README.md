@@ -95,10 +95,7 @@ When you add the integration through the UI you will see a form with these field
 ## InfluxDB quick start (Home Assistant OS / Supervisor)
 ### Install InfluxDB
 - If you run Home Assistant OS: open **Supervisor → Add-on Store** and install the InfluxDB community add-on (or run InfluxDB in Docker/server).  
-- Start the add-on and create in the Influx UI:
-  - an **Organization**
-  - a **Bucket** (e.g. `molnus`)
-  - a **Token** with write permissions for that bucket
+- Start the add-on and create in the Influx UI username, db and pass
 
 ### Provide Influx config to the integration
 - Fill `influx_url`, `influx_token`, `influx_org`, `influx_bucket` in the integration setup form in Home Assistant.
