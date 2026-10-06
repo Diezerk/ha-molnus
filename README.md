@@ -39,6 +39,6 @@ action:
 ```
 
 ## Noteringar
-- Molnus har inget officiellt API. Integrationen bygger på samma anrop som Android-appen (se `docs/molnus-app-notifications.md`) och kan sluta fungera om Molnus ändrar dem.
+- Molnus har inget officiellt API. Integrationen bygger på samma anrop som Android-appen och kan sluta fungera om Molnus ändrar dem.
 - Aktivera debug-logg (`custom_components.molnus: debug`) för att se rå JSON från Molnus om något saknas.
 - Uppgraderar du från 0.1.x tas Influx och kamera-id-inställningarna bort; kameror hittas nu automatiskt.
