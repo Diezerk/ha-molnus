@@ -1,73 +1,77 @@
-# custom_components/molnus/config_flow.py
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 import voluptuous as vol
-from homeassistant import config_entries
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.core import callback
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN
+from .api import MolnusApi, MolnusAuthError
+from .const import CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES, DOMAIN
 
-STEP_USER_DATA = vol.Schema(
-    {
-        vol.Required("email"): str,
-        vol.Required("password"): str,
-        vol.Optional("camera_id", default=""): str,
-        vol.Optional("auto_fetch_interval_hours", default=1): int,
-        # Influx v2 (optional)
-        #vol.Optional("influx_url", default=""): str,
-        #vol.Optional("influx_token", default=""): str,
-        #vol.Optional("influx_org", default=""): str,
-        #vol.Optional("influx_bucket", default=""): str,
-        # Influx v1 (legacy) (optional)
-        vol.Optional("influx_version", default="2"): str,  # "1" or "2"
-        vol.Optional("influx_db", default=""): str,
-        vol.Optional("influx_user", default=""): str,
-        vol.Optional("influx_password", default=""): str,
-    }
-)
+STEP_USER_DATA = vol.Schema({vol.Required("email"): str, vol.Required("password"): str})
 
 
-class MolnusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Config flow for Molnus integration."""
+class MolnusConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Config flow: bara e-post och lösenord, kamerorna hittas automatiskt."""
 
-    VERSION = 1
+    VERSION = 2
 
-    async def async_step_user(self, user_input=None):
-        """Handle a flow initialized by the user."""
-        errors = {}
-        if user_input is None:
-            return self.async_show_form(step_id="user", data_schema=STEP_USER_DATA)
-
-        # Validate credentials by attempting to login
-        from .client import MolnusClient, MolnusAuthError
-
-        client = MolnusClient(user_input["email"], user_input["password"])
+    async def _validate(self, email: str, password: str) -> str | None:
         try:
-            await client.login()
+            await MolnusApi(async_get_clientsession(self.hass), email, password).login()
         except MolnusAuthError:
-            errors["base"] = "auth"
-        except Exception:
-            errors["base"] = "unknown"
+            return "auth"
+        except Exception:  # noqa: BLE001
+            return "cannot_connect"
+        return None
 
-        if errors:
-            return self.async_show_form(step_id="user", data_schema=STEP_USER_DATA, errors=errors)
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            email = user_input["email"].strip()
+            await self.async_set_unique_id(email.lower())
+            self._abort_if_unique_id_configured()
+            if error := await self._validate(email, user_input["password"]):
+                errors["base"] = error
+            else:
+                return self.async_create_entry(title=email, data={"email": email, "password": user_input["password"]})
+        return self.async_show_form(step_id="user", data_schema=STEP_USER_DATA, errors=errors)
 
-        entry_data = {
-            "email": user_input["email"],
-            "password": user_input["password"],
-            "camera_id": user_input.get("camera_id", "") or "",
-            "auto_fetch_interval_hours": int(user_input.get("auto_fetch_interval_hours", 1)),
-            # influx v2
-            "influx_url": user_input.get("influx_url", "") or "",
-            "influx_token": user_input.get("influx_token", "") or "",
-            "influx_org": user_input.get("influx_org", "") or "",
-            "influx_bucket": user_input.get("influx_bucket", "") or "",
-            # influx v1
-            "influx_version": user_input.get("influx_version", "2"),
-            "influx_db": user_input.get("influx_db", "") or "",
-            "influx_user": user_input.get("influx_user", "") or "",
-            "influx_password": user_input.get("influx_password", "") or "",
-        }
+    async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
+        return await self.async_step_reauth_confirm()
 
-        await self.async_set_unique_id(f"molnus_{user_input['email']}")
-        self._abort_if_unique_id_configured()
-        return self.async_create_entry(title=user_input["email"], data=entry_data)
+    async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        entry = self._get_reauth_entry()
+        if user_input is not None:
+            if error := await self._validate(entry.data["email"], user_input["password"]):
+                errors["base"] = error
+            else:
+                return self.async_update_reload_and_abort(entry, data_updates={"password": user_input["password"]})
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required("password"): str}),
+            description_placeholders={"email": entry.data["email"]},
+            errors=errors,
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        return MolnusOptionsFlow()
+
+
+class MolnusOptionsFlow(OptionsFlow):
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+        current = self.config_entry.options.get(CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {vol.Required(CONF_SCAN_INTERVAL_MINUTES, default=current): vol.All(vol.Coerce(int), vol.Range(min=1, max=1440))}
+            ),
+        )

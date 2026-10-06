@@ -1,3 +1,76 @@
 {
-  "title": "Molnus"
+  "title": "Molnus",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Anslut till Molnus",
+        "description": "Logga in med ditt Molnus-konto. Alla dina kameror (även delade) läggs till automatiskt.",
+        "data": {
+          "email": "E-post",
+          "password": "Lösenord"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Logga in igen",
+        "description": "Lösenordet för {email} fungerar inte längre. Ange aktuellt lösenord.",
+        "data": {
+          "password": "Lösenord"
+        }
+      }
+    },
+    "error": {
+      "auth": "Felaktig e-post eller lösenord",
+      "cannot_connect": "Kunde inte ansluta till Molnus"
+    },
+    "abort": {
+      "already_configured": "Kontot är redan konfigurerat",
+      "reauth_successful": "Ny inloggning lyckades"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Molnus-inställningar",
+        "data": {
+          "scan_interval_minutes": "Reservpolling (minuter)"
+        },
+        "data_description": {
+          "scan_interval_minutes": "Nya bilder kommer direkt via WebSocket, detta är bara reservpolling."
+        }
+      }
+    }
+  },
+  "entity": {
+    "image": {
+      "last_image": {
+        "name": "Senaste bild"
+      }
+    },
+    "sensor": {
+      "last_animal": {
+        "name": "Senaste djur"
+      },
+      "battery_voltage": {
+        "name": "Batterispänning"
+      },
+      "signal_strength": {
+        "name": "Signalstyrka"
+      },
+      "camera_temperature": {
+        "name": "Temperatur"
+      }
+    },
+    "event": {
+      "new_image": {
+        "name": "Ny bild",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "new_image": "Ny bild"
+            }
+          }
+        }
+      }
+    }
+  }
 }
