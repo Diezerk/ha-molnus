@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow, OptionsFlowWithReload
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -64,7 +64,9 @@ class MolnusConfigFlow(ConfigFlow, domain=DOMAIN):
         return MolnusOptionsFlow()
 
 
-class MolnusOptionsFlow(OptionsFlow):
+class MolnusOptionsFlow(OptionsFlowWithReload):
+    """Laddar om integrationen när intervallet sparas (men inte vid reauth)."""
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(data=user_input)

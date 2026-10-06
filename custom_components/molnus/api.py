@@ -134,6 +134,9 @@ class MolnusApi:
         self._password = password
         self._token: Optional[str] = None
         self._login_lock = asyncio.Lock()
+        # Sätts när Molnus avvisar lösenordet. Stoppar fler inloggningsförsök (risk för kontospärr)
+        # tills användaren loggat in igen via reauth, som skapar en ny klient.
+        self._auth_failed = False
 
     @property
     def token(self) -> Optional[str]:
@@ -147,12 +150,15 @@ class MolnusApi:
                 timeout=aiohttp.ClientTimeout(total=20),
             ) as resp:
                 if resp.status in (400, 401, 403):
+                    self._auth_failed = True
                     raise MolnusAuthError("unauthorized")
                 if resp.status >= 400:
                     raise MolnusConnectionError(f"login HTTP {resp.status}")
                 data = await resp.json(content_type=None)
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise MolnusConnectionError(str(exc)) from exc
+        except ValueError as exc:  # t.ex. underhållssida i stället för JSON
+            raise MolnusConnectionError("invalid_json") from exc
 
         token = (data.get("token") or {}).get("accessToken") if isinstance(data, dict) else None
         if not token:
@@ -161,6 +167,8 @@ class MolnusApi:
 
     async def _relogin(self, stale_token: Optional[str]) -> None:
         async with self._login_lock:
+            if self._auth_failed:
+                raise MolnusAuthError("unauthorized")
             if self._token == stale_token:  # ingen annan hann logga in under tiden
                 await self.login()
 
@@ -186,26 +194,29 @@ class MolnusApi:
                     return await resp.json(content_type=None)
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                 raise MolnusConnectionError(str(exc)) from exc
+            except ValueError as exc:
+                raise MolnusConnectionError(f"GET {path}: invalid_json") from exc
         raise MolnusConnectionError("unreachable")
 
     async def get_cameras(self) -> list[Camera]:
         """Egna + delade kameror."""
         own = await self._get("/cameras/images")
-        _LOGGER.debug("Molnus /cameras/images: %.2000s", json.dumps(own, default=str))
         cameras: dict[str, Camera] = {}
         for item in (own or {}).get("cameras") or []:
             if isinstance(item, dict) and (cam := Camera.from_json(item)):
                 cameras[cam.id] = cam
+        # Logga bara antal: rå JSON innehåller IMEI och delande användares e-post
+        _LOGGER.debug("Molnus: %d egna kameror", len(cameras))
 
         try:
             shared = await self._get("/cameras/share/list")
-            _LOGGER.debug("Molnus /cameras/share/list: %.2000s", json.dumps(shared, default=str))
         except MolnusConnectionError:
             _LOGGER.warning("Molnus: kunde inte hämta delade kameror", exc_info=True)
             shared = {}
         for item in (shared or {}).get("sharedCameras") or []:
             if isinstance(item, dict) and (cam := Camera.from_json(item, shared=True)):
                 cameras.setdefault(cam.id, cam)
+        _LOGGER.debug("Molnus: %d kameror totalt inkl. delade", len(cameras))
         return list(cameras.values())
 
     async def get_images(self, camera_id: str, limit: int = 10) -> list[ImageItem]:
@@ -219,9 +230,15 @@ class MolnusApi:
         images.sort(key=lambda i: i.capture_date.timestamp() if i.capture_date else 0, reverse=True)
         return images
 
-    async def listen(self, on_image_upload: Callable[[Optional[str]], Awaitable[None]]) -> None:
-        """Lyssna på WebSocket tills tasken avbryts. Anropar on_image_upload(camera_id)."""
+    async def listen(
+        self,
+        on_image_upload: Callable[[Optional[str]], Awaitable[None]],
+        on_reconnected: Callable[[], Awaitable[None]],
+        on_auth_failed: Callable[[], None],
+    ) -> None:
+        """Lyssna på WebSocket tills tasken avbryts eller inloggningen slutar fungera."""
         backoff = WS_BACKOFF_MIN
+        accepted_before = False
         while True:
             token = self._token
             try:
@@ -229,35 +246,52 @@ class MolnusApi:
                     await self._relogin(None)
                     token = self._token
                 async with self._session.ws_connect(f"{WS_URL}?token={token}", heartbeat=30) as ws:
-                    _LOGGER.debug("Molnus: WebSocket ansluten")
-                    backoff = WS_BACKOFF_MIN
                     async for msg in ws:
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            await self._handle_ws_message(msg.data, on_image_upload)
-                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                        if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                             break
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            continue
+                        msg_type, camera_id = self._parse_ws_message(msg.data)
+                        if msg_type == "ACCEPTED":
+                            # Nollställ backoff först när servern godkänt anslutningen, annars kan
+                            # en server som stänger direkt ge en ny anslutning var 2:a sekund
+                            backoff = WS_BACKOFF_MIN
+                            if accepted_before:
+                                await on_reconnected()  # hämta bilder som kom medan vi var nere
+                            accepted_before = True
+                        elif msg_type == "ImageUpload":
+                            await on_image_upload(camera_id)
                     if ws.close_code == 4001:  # token ogiltig
                         await self._relogin(token)
             except asyncio.CancelledError:
                 raise
             except MolnusAuthError:
-                _LOGGER.warning("Molnus: WebSocket kunde inte logga in")
+                _LOGGER.warning("Molnus: inloggningen fungerar inte längre, WebSocket stoppas tills du loggat in igen")
+                on_auth_failed()
+                return
             except Exception as exc:  # noqa: BLE001 - lyssnaren får aldrig dö
-                _LOGGER.debug("Molnus: WebSocket fel: %s", exc)
+                # Logga inte själva felet: aiohttp-fel kan innehålla URL:en med token
+                _LOGGER.debug("Molnus: WebSocket fel: %s", type(exc).__name__)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, WS_BACKOFF_MAX)
 
-    async def _handle_ws_message(self, raw: str, on_image_upload: Callable[[Optional[str]], Awaitable[None]]) -> None:
+    @staticmethod
+    def _parse_ws_message(raw: str) -> tuple[Optional[str], Optional[str]]:
+        """Returnerar (typ, kamera-id) där typ är "ACCEPTED", "ImageUpload" eller None."""
         try:
             msg = json.loads(raw)
         except ValueError:
-            return
-        if not isinstance(msg, dict) or msg.get("type") != "NOTIFICATION":
-            return
-        data = msg.get("data") or {}
+            return None, None
+        if not isinstance(msg, dict):
+            return None, None
+        if msg.get("type") == "ACCEPTED":
+            return "ACCEPTED", None
+        data = msg.get("data")
+        if msg.get("type") != "NOTIFICATION" or not isinstance(data, dict):
+            return None, None
         ntype = (data.get("notificationType") or {}).get("name") or str(data.get("groupKey") or "").split(":")[0]
         if ntype != "ImageUpload":
-            return
+            return None, None
         payload = data.get("payload")
         if isinstance(payload, str):
             try:
@@ -265,4 +299,4 @@ class MolnusApi:
             except ValueError:
                 payload = {}
         camera_id = _first(payload, "cameraId", "CameraId") if isinstance(payload, dict) else None
-        await on_image_upload(str(camera_id) if camera_id else None)
+        return "ImageUpload", str(camera_id) if camera_id else None

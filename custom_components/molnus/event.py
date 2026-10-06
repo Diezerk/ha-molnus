@@ -30,11 +30,23 @@ class MolnusNewImageEvent(MolnusCameraEntity, EventEntity):
         # Första uppdateringen räknas inte som "ny" bild
         self._last_image_id = data.latest.id if data and data.latest else None
 
+    def _is_new(self, image_id: str) -> bool:
+        if self._last_image_id is None:
+            # Ingen bild känd sedan start (t.ex. misslyckad första hämtning): ta den som
+            # utgångsläge i stället för att larma för en gammal bild
+            self._last_image_id = image_id
+            return False
+        try:
+            # Molnus bild-id ökar; ett lägre id betyder att senaste bilden raderats
+            return int(image_id) > int(self._last_image_id)
+        except ValueError:
+            return image_id != self._last_image_id
+
     @callback
     def _handle_coordinator_update(self) -> None:
         data = self.state_data
         latest = data.latest if data else None
-        if latest and latest.id and latest.id != self._last_image_id:
+        if latest and latest.id and self._is_new(latest.id):
             self._last_image_id = latest.id
             top = latest.top_prediction
             self._trigger_event(

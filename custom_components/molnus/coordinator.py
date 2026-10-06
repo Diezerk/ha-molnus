@@ -75,8 +75,16 @@ class MolnusCoordinator(DataUpdateCoordinator[dict[str, CameraState]]):
     def start_listening(self) -> None:
         if self._ws_task is None:
             self._ws_task = self.config_entry.async_create_background_task(
-                self.hass, self.api.listen(self._on_image_upload), name="molnus_websocket"
+                self.hass,
+                self.api.listen(self._on_image_upload, self._on_reconnected, self._on_auth_failed),
+                name="molnus_websocket",
             )
+
+    async def _on_reconnected(self) -> None:
+        await self.async_request_refresh()
+
+    def _on_auth_failed(self) -> None:
+        self.config_entry.async_start_reauth(self.hass)
 
     def stop_listening(self) -> None:
         if self._ws_task:

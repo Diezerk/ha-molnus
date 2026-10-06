@@ -1,14 +1,14 @@
 {
   "domain": "molnus",
   "name": "Molnus",
-  "version": "0.2.0",
-  "documentation": "https://github.com/Diezerk/ha-molnus",
-  "issue_tracker": "https://github.com/Diezerk/ha-molnus/issues",
   "codeowners": [
     "@Diezerk"
   ],
   "config_flow": true,
+  "documentation": "https://github.com/Diezerk/ha-molnus",
   "integration_type": "hub",
   "iot_class": "cloud_push",
-  "requirements": []
+  "issue_tracker": "https://github.com/Diezerk/ha-molnus/issues",
+  "requirements": [],
+  "version": "0.2.3"
 }
