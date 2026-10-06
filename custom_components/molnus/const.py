@@ -12,16 +12,37 @@ IMAGES_PER_CAMERA = 10
 
 EVENT_NEW_IMAGE = "new_image"
 
-# Kända labels och en enkel svensk "översättning"
+# Molnus artkoder -> svenska namn (källa: Molnus appens språkfil, image.predictionLabels)
 LABELS = {
+    "AVES": "Fågel",
+    "EQUUS": "Häst",
+    "CANIDAE": "Hund",
     "CAPREOLUS": "Rådjur",
-    "CERVUS_ELAPHUS": "Kronhjort",
+    "FELIS_CATUS": "Katt",
+    "HOMO_SAPIENS": "Människa",
     "SUS_SCROFA": "Vildsvin",
-    "DAMA_DAMA": "Dovhjort",
+    "VULPES": "Räv",
     "MELES": "Grävling",
     "ALCES": "Älg",
+    "SCIURIDAE": "Ekorre",
+    "RATTUS": "Råtta",
+    "GRUS_GRUS": "Trana",
+    "URSIDAE": "Björn",
+    "OVIS": "Får",
+    "BOS_TAURUS": "Ko",
+    "LYNX": "Lodjur",
     "LEPORIDAE": "Hare/kanin",
-    "VULPES": "Räv",
-    "HOMO_SAPIENS": "Människa",
     "VEHICULUM": "Fordon",
+    "CERVUS_ELAPHUS": "Kronhjort",
+    "DAMA_DAMA": "Dovhjort",
+    "MARTES_MARTES": "Mård",
+    "GULO_GULO": "Järv",
+    "RANGIFER_TARANDUS": "Ren",
+    "NYCTEREUTES_PROCYONOIDES": "Mårdhund",
+    "CANIS_LUPUS": "Varg",
+    "UNKNOWN": "Okänd",
+    "OTHER": "Annan",
+    "PROCYON_LOTOR": "Tvättbjörn",
+    "ODOCOILEUS_VIRGINIANUS": "Vitsvanshjort",
+    "MELEAGRIS_GALLOPAVO": "Kalkon",
 }

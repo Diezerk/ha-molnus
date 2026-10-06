@@ -48,6 +48,46 @@ actions:
         image: "{{ trigger.to_state.attributes.image_url }}"
 ```
 
+## Djur och andra träffar som Molnus känner igen
+
+Namnet i `label_name` (och sensorn "Senaste djur") är på svenska. Rå-koden finns i attributet `label`.
+
+| Namn (`label_name`) | Kod (`label`) |
+|---|---|
+| Fågel | `AVES` |
+| Häst | `EQUUS` |
+| Hund | `CANIDAE` |
+| Rådjur | `CAPREOLUS` |
+| Katt | `FELIS_CATUS` |
+| Människa | `HOMO_SAPIENS` |
+| Vildsvin | `SUS_SCROFA` |
+| Räv | `VULPES` |
+| Grävling | `MELES` |
+| Älg | `ALCES` |
+| Ekorre | `SCIURIDAE` |
+| Råtta | `RATTUS` |
+| Trana | `GRUS_GRUS` |
+| Björn | `URSIDAE` |
+| Får | `OVIS` |
+| Ko | `BOS_TAURUS` |
+| Lodjur | `LYNX` |
+| Hare/kanin | `LEPORIDAE` |
+| Fordon | `VEHICULUM` |
+| Kronhjort | `CERVUS_ELAPHUS` |
+| Dovhjort | `DAMA_DAMA` |
+| Mård | `MARTES_MARTES` |
+| Järv | `GULO_GULO` |
+| Ren | `RANGIFER_TARANDUS` |
+| Mårdhund | `NYCTEREUTES_PROCYONOIDES` |
+| Varg | `CANIS_LUPUS` |
+| Okänd | `UNKNOWN` |
+| Annan | `OTHER` |
+| Tvättbjörn | `PROCYON_LOTOR` |
+| Vitsvanshjort | `ODOCOILEUS_VIRGINIANUS` |
+| Kalkon | `MELEAGRIS_GALLOPAVO` |
+
+Okända koder visas som koden med stor begynnelsebokstav.
+
 ## Noteringar
 - Molnus har inget officiellt API. Integrationen bygger på samma anrop som Android-appen och kan sluta fungera om Molnus ändrar dem.
 - Aktivera debug-logg (`custom_components.molnus: debug`) för att se rå JSON från Molnus om något saknas.
