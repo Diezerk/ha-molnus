@@ -31,6 +31,9 @@ STATUS_SENSORS = (
 )
 
 
+NO_ANIMAL = "Inget djur"
+
+
 def readable_label(label: str | None) -> str | None:
     if not label:
         return None
@@ -49,8 +52,10 @@ class MolnusLastAnimalSensor(MolnusCameraEntity, SensorEntity):
     @property
     def native_value(self) -> str | None:
         data = self.state_data
-        top = data.latest.top_prediction if data and data.latest else None
-        return readable_label(top.label) if top else None
+        if not data or not data.latest:
+            return None
+        top = data.latest.top_prediction
+        return readable_label(top.label) if top else NO_ANIMAL
 
     @property
     def extra_state_attributes(self) -> dict:
