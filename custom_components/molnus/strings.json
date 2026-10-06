@@ -20,7 +20,8 @@
     },
     "error": {
       "auth": "Wrong email or password",
-      "cannot_connect": "Could not connect to Molnus"
+      "cannot_connect": "Could not connect to Molnus",
+      "unknown": "Unexpected error, see the log"
     },
     "abort": {
       "already_configured": "This account is already configured",

@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 import aiohttp
@@ -31,16 +31,18 @@ class MolnusConnectionError(MolnusError):
 
 
 def _parse_iso_to_dt(iso: Optional[str]) -> Optional[datetime]:
-    """Tolerant ISO -> datetime parser. Hanterar trailing Z."""
+    """Tolerant ISO -> datetime parser. Hanterar trailing Z. Returnerar alltid tid i UTC-medveten form."""
     if not iso or not isinstance(iso, str):
         return None
     try:
-        return datetime.fromisoformat(iso[:-1] + "+00:00" if iso.endswith("Z") else iso)
+        parsed = datetime.fromisoformat(iso[:-1] + "+00:00" if iso.endswith("Z") else iso)
     except ValueError:
         try:
-            return datetime.fromisoformat(iso.split(".")[0].replace("Z", ""))
+            parsed = datetime.fromisoformat(iso.split(".")[0].replace("Z", ""))
         except ValueError:
             return None
+    # Molnus skickar UTC; utan tidszon går tiden inte att jämföra med HA:s tider
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _first(d: dict, *keys: str) -> Any:

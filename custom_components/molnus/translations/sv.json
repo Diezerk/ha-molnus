@@ -20,7 +20,8 @@
     },
     "error": {
       "auth": "Felaktig e-post eller lösenord",
-      "cannot_connect": "Kunde inte ansluta till Molnus"
+      "cannot_connect": "Kunde inte ansluta till Molnus",
+      "unknown": "Oväntat fel, se loggen"
     },
     "abort": {
       "already_configured": "Kontot är redan konfigurerat",

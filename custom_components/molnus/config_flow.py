@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -8,8 +9,10 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResu
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import MolnusApi, MolnusAuthError
+from .api import MolnusApi, MolnusAuthError, MolnusConnectionError
 from .const import CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES, DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA = vol.Schema({vol.Required("email"): str, vol.Required("password"): str})
 
@@ -24,8 +27,11 @@ class MolnusConfigFlow(ConfigFlow, domain=DOMAIN):
             await MolnusApi(async_get_clientsession(self.hass), email, password).login()
         except MolnusAuthError:
             return "auth"
-        except Exception:  # noqa: BLE001
+        except MolnusConnectionError:
             return "cannot_connect"
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Molnus: oväntat fel vid inloggning")
+            return "unknown"
         return None
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:

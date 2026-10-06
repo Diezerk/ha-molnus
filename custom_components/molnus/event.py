@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from homeassistant.components.event import EventEntity
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import MolnusConfigEntry
 from .const import EVENT_NEW_IMAGE
@@ -11,7 +11,7 @@ from .entity import MolnusCameraEntity, add_camera_entities
 from .sensor import readable_label
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: MolnusConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+async def async_setup_entry(hass: HomeAssistant, entry: MolnusConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
     entry.async_on_unload(
         add_camera_entities(entry.runtime_data, async_add_entities, lambda c, cid: [MolnusNewImageEvent(c, cid)])
     )

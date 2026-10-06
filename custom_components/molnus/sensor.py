@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
-from homeassistant.const import UnitOfElectricPotential, UnitOfTemperature
-from homeassistant.helpers.entity import EntityCategory
+from homeassistant.const import EntityCategory, UnitOfElectricPotential, UnitOfTemperature
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import MolnusConfigEntry
 from .const import LABELS
@@ -19,7 +18,7 @@ def _make_entities(coordinator: MolnusCoordinator, camera_id: str) -> list[Molnu
     ]
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: MolnusConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+async def async_setup_entry(hass: HomeAssistant, entry: MolnusConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
     entry.async_on_unload(add_camera_entities(entry.runtime_data, async_add_entities, _make_entities))
 
 

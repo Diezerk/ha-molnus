@@ -11,7 +11,7 @@ Inofficiell integration för [Molnus](https://molnus.com) viltkameror. Logga in 
 | Senaste bild | `image` | Kamerans senaste foto |
 | Senaste djur | `sensor` | Översta AI-träffen (t.ex. "Vildsvin"). Attribut: `label`, `accuracy`, `capture_date`, `image_url`, `shared_camera` |
 | Batteri / Signal / Temperatur | `sensor` (diagnostik) | Kamerans status, uppdateras vid reservpollingen |
-| Ny bild | `event` | Avfyras för varje ny bild, bär `label`, `accuracy`, `image_url`. Använd som automations-trigger |
+| Ny bild | `event` | Avfyras när kameran fått en ny bild, med `label_name`, `label`, `accuracy`, `image_url`. Kommer flera bilder tätt inpå varandra kan det bli ett event för den senaste. Använd som automations-trigger |
 
 ## Installation via HACS
 1. HACS → ⋮ → **Anpassade databaser / Custom repositories**.

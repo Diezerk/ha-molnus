@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable
 
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
@@ -38,7 +38,7 @@ class MolnusCameraEntity(CoordinatorEntity[MolnusCoordinator]):
 
 def add_camera_entities(
     coordinator: MolnusCoordinator,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
     factory: Callable[[MolnusCoordinator, str], list[MolnusCameraEntity]],
 ) -> Callable[[], None]:
     """Lägg till entiteter för alla kameror nu och för nya kameror som dyker upp senare."""
