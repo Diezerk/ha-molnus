@@ -24,18 +24,28 @@ Manuellt: kopiera `custom_components/molnus` till `/config/custom_components/`.
 ## Inställningar
 Under integrationen → *Konfigurera*: reservpolling i minuter (standard 15). Nya bilder kommer annars direkt via WebSocket.
 
-## Exempel: notis när vildsvin syns
+## Exempel: notis med djurets namn
+Event-entiteten får djurets uppgifter som attribut: `label` (t.ex. `SUS_SCROFA`), `label_name` (t.ex. `Vildsvin`), `accuracy`, `image_url` och `capture_date`.
+
 ```yaml
-trigger:
-  - platform: state
-    entity_id: event.skogen_ny_bild   # byt mot din kameras event-entitet
-condition:
+alias: Djur syns på Ekbacken
+mode: queued
+triggers:
+  - trigger: state
+    entity_id: event.ekbacken_ny_bild   # byt mot din kameras event-entitet
+    not_from: unavailable
+    not_to: [unavailable, unknown]
+conditions:
+  # bara djur: ingen träff, människa eller fordon ger ingen notis
   - condition: template
-    value_template: "{{ trigger.to_state.attributes.label == 'SUS_SCROFA' }}"
-action:
-  - service: notify.notify
+    value_template: "{{ trigger.to_state.attributes.label not in [none, 'HOMO_SAPIENS', 'VEHICULUM'] }}"
+actions:
+  - action: notify.mobile_app_din_telefon
     data:
-      message: "Vildsvin sedd!"
+      title: Ekbacken
+      message: "{{ trigger.to_state.attributes.label_name }} sedd ({{ trigger.to_state.attributes.accuracy }} %)"
+      data:
+        image: "{{ trigger.to_state.attributes.image_url }}"
 ```
 
 ## Noteringar
