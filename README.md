@@ -22,7 +22,7 @@ Inofficiell integration för [Molnus](https://molnus.com) viltkameror. Logga in 
 Manuellt: kopiera `custom_components/molnus` till `/config/custom_components/`.
 
 ## Inställningar
-Under integrationen → *Konfigurera*: reservpolling i minuter (standard 15). Nya bilder kommer annars direkt via WebSocket.
+Under integrationen → *Konfigurera*: reservpolling i minuter (standard 30). Nya bilder kommer annars direkt via WebSocket.
 
 ## Exempel: notis med djurets namn
 Event-entiteten får djurets uppgifter som attribut: `label_name` (läsbart namn, t.ex. `Vildsvin`), `label` (Molnus rå-kod, t.ex. `SUS_SCROFA`), `accuracy`, `image_url` och `capture_date`.
